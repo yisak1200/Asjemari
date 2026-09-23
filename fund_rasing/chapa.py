@@ -16,8 +16,13 @@ class ChapaError(Exception):
     pass
 
 
+def chapa_is_configured():
+    key = str(settings.CHAPA_SECRET_KEY or "").strip()
+    return bool(key and "your-test-key" not in key.lower() and "replace" not in key.lower())
+
+
 def _request(method, path, payload=None):
-    if not settings.CHAPA_SECRET_KEY:
+    if not chapa_is_configured():
         raise ChapaError("Chapa is not configured on the server.")
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = Request(

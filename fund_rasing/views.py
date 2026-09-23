@@ -20,8 +20,39 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from startup_company.models import StartupCompany
-from .chapa import ChapaError, initialize_transaction, reconcile_transaction
+from .chapa import ChapaError, chapa_is_configured, initialize_transaction, reconcile_transaction
 from .models import Campaign, CampaignCategory, CampaignLike, CampaignMedia, Donation, FundTransaction, ReportCampaign, WithdrawalRequest
+
+
+MAX_CAMPAIGN_IMAGE_BYTES = 15 * 1024 * 1024
+MAX_DEMO_VIDEO_BYTES = 75 * 1024 * 1024
+MAX_CAMPAIGN_UPLOAD_BYTES = 90 * 1024 * 1024
+CAMPAIGN_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+DEMO_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v"}
+
+
+def validate_campaign_media(cover, demo_files=()):
+    if not cover or Path(cover.name).suffix.lower() not in CAMPAIGN_IMAGE_EXTENSIONS:
+        return "Choose a JPG, PNG or WEBP campaign cover image."
+    if cover.size > MAX_CAMPAIGN_IMAGE_BYTES:
+        return "The campaign cover image must be 15 MB or smaller."
+    if len(demo_files) > 8:
+        return "Upload no more than 8 demo images or videos."
+    total_size = cover.size
+    for media_file in demo_files:
+        extension = Path(media_file.name).suffix.lower()
+        if extension in CAMPAIGN_IMAGE_EXTENSIONS:
+            if media_file.size > MAX_CAMPAIGN_IMAGE_BYTES:
+                return f"{media_file.name} exceeds the 15 MB image limit."
+        elif extension in DEMO_VIDEO_EXTENSIONS:
+            if media_file.size > MAX_DEMO_VIDEO_BYTES:
+                return f"{media_file.name} exceeds the 75 MB video limit."
+        else:
+            return f"{media_file.name} is not a supported campaign image or video."
+        total_size += media_file.size
+    if total_size > MAX_CAMPAIGN_UPLOAD_BYTES:
+        return "Campaign media must be 90 MB or less in total."
+    return ""
 
 
 def funded_donations(campaign):
@@ -232,6 +263,12 @@ class CampaignCreateView(APIView):
         if any(not request.data.get(field) for field in required) or not request.FILES.get("cover_image"):
             return Response({"error": "Title, description, category, target amount and cover image are required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        cover_image = request.FILES["cover_image"]
+        demo_files = request.FILES.getlist("demo_media")
+        media_error = validate_campaign_media(cover_image, demo_files)
+        if media_error:
+            return Response({"error": media_error}, status=status.HTTP_400_BAD_REQUEST)
+
         category_name = request.data["category"].strip()
         category = CampaignCategory.objects.filter(name__iexact=category_name).first()
         if not category:
@@ -241,15 +278,15 @@ class CampaignCreateView(APIView):
             campaign_creator=request.user,
             campaign_title=request.data["title"],
             campaign_description=request.data["description"],
-            cover_image=request.FILES["cover_image"],
+            cover_image=cover_image,
             startup_company=startup,
             creator_type="Startup",
             target_amount=request.data["target_amount"],
             location=request.data.get("location") or startup.location,
             campaign_status="Pending",
         )
-        for media_file in request.FILES.getlist("demo_media"):
-            media_type = "video" if (media_file.content_type or "").startswith("video/") else "image"
+        for media_file in demo_files:
+            media_type = "video" if Path(media_file.name).suffix.lower() in DEMO_VIDEO_EXTENSIONS else "image"
             CampaignMedia.objects.create(campaign=campaign, file=media_file, media_type=media_type)
         return Response({"message": "Campaign submitted for review.", "campaign_id": str(campaign.id), "status": campaign.campaign_status}, status=status.HTTP_201_CREATED)
 
@@ -309,7 +346,11 @@ class CampaignManageView(APIView):
                 return Response({"error": "Select a valid campaign category."}, status=status.HTTP_400_BAD_REQUEST)
             campaign.category = category
         if request.FILES.get("cover_image"):
-            campaign.cover_image = request.FILES["cover_image"]
+            cover_image = request.FILES["cover_image"]
+            media_error = validate_campaign_media(cover_image)
+            if media_error:
+                return Response({"error": media_error}, status=status.HTTP_400_BAD_REQUEST)
+            campaign.cover_image = cover_image
         campaign.save()
         return Response({"message": "Campaign updated.", "campaign": campaign_payload(campaign, request)})
 
@@ -412,6 +453,11 @@ class ChapaPaymentInitializeView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, campaign_id):
+        if not chapa_is_configured():
+            return Response(
+                {"error": "Chapa payments are not configured. Add CHAPA_SECRET_KEY to the backend environment and restart the server."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         campaign = Campaign.objects.filter(id=campaign_id, campaign_status__iexact="Approved").first()
         if not campaign:
             return Response({"error": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -525,11 +571,14 @@ class ChapaPaymentOptionsView(APIView):
     authentication_classes = []
 
     def get(self, request):
+        configured = chapa_is_configured()
         return Response({
+            "configured": configured,
+            "message": "" if configured else "Chapa payments are temporarily unavailable because the server is not configured.",
             "fee_rate": str(settings.CHAPA_FEE_RATE),
             "currencies": [
-                {"code": "ETB", "minimum": "10", "maximum": None, "etb_rate": "1", "enabled": True},
-                {"code": "USD", "minimum": "1", "maximum": "10000", "etb_rate": None, "enabled": True},
+                {"code": "ETB", "minimum": "10", "maximum": None, "etb_rate": "1", "enabled": configured},
+                {"code": "USD", "minimum": "1", "maximum": "10000", "etb_rate": None, "enabled": configured},
             ],
         })
 
@@ -538,7 +587,9 @@ class ChapaPaymentCallbackView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    def get(self, request):
+    def _confirm(self, request):
+        # Callback fields are only a notification. Never trust their status,
+        # amount, or currency; reconcile_transaction independently asks Chapa.
         tx_ref = (
             request.query_params.get("tx_ref") or
             request.query_params.get("trx_ref") or
@@ -550,8 +601,14 @@ class ChapaPaymentCallbackView(APIView):
         try:
             fund_transaction = reconcile_transaction(tx_ref)
         except ChapaError as error:
-            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(error)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response({"tx_ref": tx_ref, "status": fund_transaction.payment_status, "paid": fund_transaction.is_paid})
+
+    def get(self, request):
+        return self._confirm(request)
+
+    def post(self, request):
+        return self._confirm(request)
 
 
 class ChapaPaymentStatusView(APIView):

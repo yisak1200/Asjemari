@@ -1,6 +1,7 @@
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from decimal import Decimal
 from unittest.mock import patch
 from urllib.parse import urlparse
@@ -11,6 +12,7 @@ from .chapa import reconcile_transaction
 from .models import Campaign, CampaignCategory, CampaignLike, CampaignMedia, Donation, FundTransaction, ReportCampaign, WithdrawalRequest
 
 
+@override_settings(CHAPA_SECRET_KEY="CHASECK_TEST-unit-test")
 class CampaignManagementTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(email="creator@example.com", password="StrongPass123!", full_name="Campaign Creator")
@@ -53,6 +55,28 @@ class CampaignManagementTests(APITestCase):
         }, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(CampaignMedia.objects.filter(campaign_id=response.data["campaign_id"]).count(), 2)
+
+    def test_create_campaign_rejects_unsupported_cover_before_saving(self):
+        StartupCompany.objects.create(
+            user=self.user,
+            fayda_number="987654321099",
+            company_name="Safe Upload Startup",
+            company_description="A verified startup.",
+            Traction_describtion="Growing safely.",
+            pitch_deck="pitch_decks/test.pdf",
+            company_status="Approved",
+        )
+        before = Campaign.objects.count()
+        response = self.client.post("/api/campaigns/create/", {
+            "title": "Unsafe upload",
+            "description": "This campaign should not be saved.",
+            "category": "Technology",
+            "target_amount": "250000",
+            "location": "Addis Ababa",
+            "cover_image": SimpleUploadedFile("not-an-image.txt", b"not an image", content_type="text/plain"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Campaign.objects.count(), before)
 
     def test_owner_can_view_progress_edit_and_list_contributions(self):
         campaigns = self.client.get("/api/campaigns/mine/")
@@ -224,9 +248,24 @@ class CampaignManagementTests(APITestCase):
     def test_payment_options_always_enables_usd(self):
         response = self.client.get("/api/campaigns/payments/chapa/options/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["configured"])
         self.assertEqual(response.data["fee_rate"], "0.025")
         self.assertTrue(response.data["currencies"][1]["enabled"])
         self.assertIsNone(response.data["currencies"][1]["etb_rate"])
+
+    @override_settings(CHAPA_SECRET_KEY="")
+    def test_unconfigured_chapa_is_disabled_without_creating_a_donation(self):
+        options = self.client.get("/api/campaigns/payments/chapa/options/")
+        self.assertFalse(options.data["configured"])
+        self.assertTrue(all(not item["enabled"] for item in options.data["currencies"]))
+        before = Donation.objects.count()
+        response = self.client.post(f"/api/campaigns/{self.campaign.id}/payments/chapa/initialize/", {
+            "amount": "750",
+            "currency": "ETB",
+            "name": "Campaign Supporter",
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(Donation.objects.count(), before)
 
     @patch("fund_rasing.chapa.swap_usd_to_etb")
     @patch("fund_rasing.chapa.verify_transaction")
@@ -295,6 +334,67 @@ class CampaignManagementTests(APITestCase):
         self.assertEqual(result.data["amount"], "750.00")
         self.assertEqual(result.data["fee_amount"], "18.75")
         self.assertEqual(result.data["charged_amount"], "768.75")
+
+    @patch("fund_rasing.chapa.verify_transaction")
+    def test_callback_ignores_claimed_status_and_confirms_with_chapa_once(self, verify):
+        donation = Donation.objects.create(campaign=self.campaign, name="Callback Supporter", amount=500)
+        FundTransaction.objects.create(
+            donation=donation,
+            payment_gateway="Chapa",
+            transaction_id="asj-callback-paid",
+            balance=0,
+            currency="ETB",
+            contribution_amount=Decimal("500"),
+            transaction_fee=Decimal("12.50"),
+            charged_amount=Decimal("512.50"),
+        )
+        verify.return_value = {"status": "success", "data": {
+            "status": "success",
+            "tx_ref": "asj-callback-paid",
+            "currency": "ETB",
+            "amount": "512.50",
+        }}
+
+        callback = self.client.post("/api/campaigns/payments/chapa/callback/", {
+            "trx_ref": "asj-callback-paid",
+            "status": "failed",
+            "amount": "1.00",
+        }, format="json")
+        self.assertEqual(callback.status_code, status.HTTP_200_OK)
+        self.assertEqual(callback.data["status"], "Approved")
+        self.assertTrue(callback.data["paid"])
+
+        repeated = self.client.get("/api/campaigns/payments/chapa/callback/?tx_ref=asj-callback-paid&status=failed")
+        self.assertEqual(repeated.status_code, status.HTTP_200_OK)
+        self.assertTrue(repeated.data["paid"])
+        verify.assert_called_once_with("asj-callback-paid")
+
+    @patch("fund_rasing.chapa.verify_transaction")
+    def test_callback_keeps_unconfirmed_chapa_payment_pending(self, verify):
+        donation = Donation.objects.create(campaign=self.campaign, amount=500)
+        FundTransaction.objects.create(
+            donation=donation,
+            payment_gateway="Chapa",
+            transaction_id="asj-callback-pending",
+            balance=0,
+            currency="ETB",
+            contribution_amount=Decimal("500"),
+            charged_amount=Decimal("500"),
+        )
+        verify.return_value = {"status": "success", "data": {
+            "status": "pending",
+            "tx_ref": "asj-callback-pending",
+            "currency": "ETB",
+            "amount": "500.00",
+        }}
+
+        callback = self.client.get("/api/campaigns/payments/chapa/callback/?trx_ref=asj-callback-pending&status=success")
+        self.assertEqual(callback.status_code, status.HTTP_200_OK)
+        self.assertEqual(callback.data["status"], "Pending")
+        self.assertFalse(callback.data["paid"])
+        payment = FundTransaction.objects.get(transaction_id="asj-callback-pending")
+        self.assertEqual(payment.payment_status, "Pending")
+        self.assertFalse(payment.is_paid)
 
     @patch("fund_rasing.chapa.verify_transaction")
     def test_chapa_verification_rejects_mismatched_amount(self, verify):
