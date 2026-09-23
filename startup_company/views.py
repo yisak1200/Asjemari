@@ -7,6 +7,17 @@ from django.db.models import Q
 from .models import StartupCompany
 
 
+MAX_FAYDA_IMAGE_BYTES = 15 * 1024 * 1024
+MAX_PITCH_DECK_BYTES = 50 * 1024 * 1024
+
+
+def _upload_size_error(upload, maximum, label):
+    if upload and upload.size > maximum:
+        maximum_mb = maximum // (1024 * 1024)
+        return f"{label} must be {maximum_mb} MB or smaller."
+    return None
+
+
 class StartupApplicationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -21,6 +32,16 @@ class StartupApplicationView(APIView):
             return Response({"error": "Complete every required startup and Fayda field."}, status=status.HTTP_400_BAD_REQUEST)
         if not saved_identity and (not request.FILES.get("fayda_front_image") or not request.FILES.get("fayda_back_image")):
             return Response({"error": "Upload clear images of the front and back of your Fayda ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+        upload_checks = [
+            (request.FILES.get("pitch_deck"), MAX_PITCH_DECK_BYTES, "The pitch deck"),
+            (request.FILES.get("fayda_front_image"), MAX_FAYDA_IMAGE_BYTES, "The Fayda front image"),
+            (request.FILES.get("fayda_back_image"), MAX_FAYDA_IMAGE_BYTES, "The Fayda back image"),
+        ]
+        for upload, maximum, label in upload_checks:
+            upload_error = _upload_size_error(upload, maximum, label)
+            if upload_error:
+                return Response({"error": upload_error}, status=status.HTTP_400_BAD_REQUEST)
 
         startup = StartupCompany.objects.create(
             user=request.user,

@@ -4,6 +4,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import User
 from .models import StartupCompany
+from .views import MAX_PITCH_DECK_BYTES, _upload_size_error
 
 
 class StartupWorkflowTests(APITestCase):
@@ -51,3 +52,12 @@ class StartupWorkflowTests(APITestCase):
         self.assertTrue(status_response.data["can_create_campaign"])
         self.assertTrue(status_response.data["fayda_saved"])
         self.assertEqual(len(status_response.data["companies"]), 2)
+
+    def test_oversized_pitch_deck_has_clear_validation_error(self):
+        pitch = SimpleUploadedFile("large.pdf", b"pdf", content_type="application/pdf")
+        pitch.size = MAX_PITCH_DECK_BYTES + 1
+
+        self.assertEqual(
+            _upload_size_error(pitch, MAX_PITCH_DECK_BYTES, "The pitch deck"),
+            "The pitch deck must be 50 MB or smaller.",
+        )
