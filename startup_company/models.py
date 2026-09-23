@@ -8,14 +8,14 @@ class KycDocument(models.Model):
     
     startup_certification = models.ImageField(
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])],
-        upload_to='media/certifications/')
+        upload_to='certifications/')
     License = models.ImageField(
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])],
-        upload_to='media/licenses/')
+        upload_to='licenses/')
     Tin = models.CharField(max_length=255)
     company_manager_national_id = models.ImageField(
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png','svg','webp','gif'])],
-        upload_to='media/national_id_images/'
+        upload_to='national_id_images/'
         )
 
 class StartupCompany(models.Model):
@@ -24,11 +24,11 @@ class StartupCompany(models.Model):
     kyc = models.OneToOneField(KycDocument, on_delete=models.CASCADE, null=True, blank=True)
     fayda_number = models.CharField(max_length=32, unique=True, null=True)
     fayda_front_image = models.ImageField(
-        upload_to='media/fayda_images/', null=True, blank=True,
+        upload_to='fayda_images/', null=True, blank=True,
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])],
     )
     fayda_back_image = models.ImageField(
-        upload_to='media/fayda_images/', null=True, blank=True,
+        upload_to='fayda_images/', null=True, blank=True,
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])],
     )
     fayda_status_choice = [
@@ -47,7 +47,7 @@ class StartupCompany(models.Model):
     Traction_describtion = models.TextField()
     pitch_deck = models.FileField(
         validators=[FileExtensionValidator(allowed_extensions=['pdf', 'doc', 'docx'])],
-        upload_to='media/pitch_decks/'
+        upload_to='pitch_decks/'
         )
     company_status_choice = [
         ('Pending', 'Pending'),
@@ -72,12 +72,12 @@ class ProgressVideoandImage(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     progress_video = models.FileField(
         validators=[FileExtensionValidator(allowed_extensions=['mp4', 'avi', 'mov','mp3','wav'])],
-        upload_to='media/progress_videos/',
+        upload_to='progress_videos/',
         null=True,blank=True
     )
     image = models.ImageField(
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])],
-        upload_to='media/progress_images/',
+        upload_to='progress_images/',
         null=True,blank=True
     )
     progress_update_description = models.TextField(null=True, blank=True)

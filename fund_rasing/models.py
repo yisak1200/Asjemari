@@ -16,7 +16,7 @@ class Campaign(models.Model):
     creator_type = models.CharField(max_length=220, default='Startup')
     short_code = models.CharField(max_length=220, unique=True, null=True, blank=True)
     campaign_description = models.TextField()
-    cover_image = models.ImageField(upload_to='media/campaign_cover_images/')
+    cover_image = models.ImageField(upload_to='campaign_cover_images/')
     startup_company = models.ForeignKey('startup_company.StartupCompany', on_delete=models.CASCADE, null=True, blank=True)
     individual = models.ForeignKey('individual.Individual', on_delete=models.CASCADE, null=True, blank=True)
     demo = models.ForeignKey('startup_company.DemovideoandImage', on_delete=models.CASCADE, null=True, blank=True)
@@ -51,7 +51,7 @@ class CampaignMedia(models.Model):
     MEDIA_TYPES = [("image", "Image"), ("video", "Video")]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="demo_media")
-    file = models.FileField(upload_to="media/campaign_demos/")
+    file = models.FileField(upload_to="campaign_demos/")
     media_type = models.CharField(max_length=10, choices=MEDIA_TYPES)
     created_at = models.DateTimeField(auto_now_add=True)
 

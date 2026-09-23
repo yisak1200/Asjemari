@@ -3,6 +3,7 @@ from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from decimal import Decimal
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 from accounts.models import User
 from startup_company.models import StartupCompany
@@ -19,7 +20,7 @@ class CampaignManagementTests(APITestCase):
             campaign_creator=self.user,
             campaign_title="Original campaign",
             campaign_description="Original story",
-            cover_image="media/campaign_cover_images/test.jpg",
+            cover_image=SimpleUploadedFile("test.jpg", b"test cover", content_type="image/jpeg"),
             target_amount=100000,
             location="Addis Ababa",
             campaign_status="Approved",
@@ -111,6 +112,14 @@ class CampaignManagementTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["demo_media"]), 2)
+        cover = self.client.get(urlparse(response.data["cover_image"]).path)
+        self.assertEqual(cover.status_code, status.HTTP_200_OK)
+        self.assertEqual(cover["Content-Type"], "image/jpeg")
+        for item in response.data["demo_media"]:
+            media = self.client.get(urlparse(item["url"]).path)
+            self.assertEqual(media.status_code, status.HTTP_200_OK)
+            expected_type = "image/jpeg" if item["type"] == "image" else "video/mp4"
+            self.assertEqual(media["Content-Type"], expected_type)
         self.assertTrue(response.data["pitch_deck"]["name"].startswith("campaign-deck"))
         self.assertTrue(response.data["pitch_deck"]["name"].endswith(".pdf"))
         self.assertEqual(response.data["startup"]["name"], "Campaign Company")

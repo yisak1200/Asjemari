@@ -1,12 +1,14 @@
 from django.urls import path
 
-from .views import CampaignContributionListView, CampaignCreateView, CampaignDetailView, CampaignLikeView, CampaignListView, CampaignManageView, CampaignPitchDeckView, CampaignReportView, ChapaPaymentCallbackView, ChapaPaymentInitializeView, ChapaPaymentOptionsView, ChapaPaymentStatusView, MyCampaignListView, WithdrawalRequestView
+from .views import CampaignContributionListView, CampaignCoverView, CampaignCreateView, CampaignDetailView, CampaignLikeView, CampaignListView, CampaignManageView, CampaignMediaView, CampaignPitchDeckView, CampaignReportView, ChapaPaymentCallbackView, ChapaPaymentInitializeView, ChapaPaymentOptionsView, ChapaPaymentStatusView, MyCampaignListView, WithdrawalRequestView
 
 urlpatterns = [
     path("", CampaignListView.as_view(), name="campaign_list"),
     path("create/", CampaignCreateView.as_view(), name="campaign_create"),
     path("mine/", MyCampaignListView.as_view(), name="my_campaigns"),
     path("withdrawals/", WithdrawalRequestView.as_view(), name="withdrawal_requests"),
+    path("media/<uuid:media_id>/", CampaignMediaView.as_view(), name="campaign_media"),
+    path("<uuid:campaign_id>/cover/", CampaignCoverView.as_view(), name="campaign_cover"),
     path("<uuid:campaign_id>/pitch-deck/", CampaignPitchDeckView.as_view(), name="campaign_pitch_deck"),
     path("<uuid:campaign_id>/", CampaignDetailView.as_view(), name="campaign_detail"),
     path("<uuid:campaign_id>/manage/", CampaignManageView.as_view(), name="campaign_manage"),

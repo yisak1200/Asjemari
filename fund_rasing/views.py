@@ -68,9 +68,9 @@ def campaign_available_to_withdraw(campaign):
 def campaign_payload(campaign, request=None):
     donations = funded_donations(campaign)
     raised = donations.aggregate(total=Sum("amount"))["total"] or 0
-    cover_image = campaign.cover_image.url if campaign.cover_image else ""
-    if cover_image and request:
-        cover_image = request.build_absolute_uri(cover_image)
+    cover_image = ""
+    if campaign.cover_image and request and campaign.cover_image.storage.exists(campaign.cover_image.name):
+        cover_image = request.build_absolute_uri(reverse("campaign_cover", args=[campaign.id]))
     liked_by_me = False
     if request and request.user.is_authenticated:
         liked_by_me = campaign.likes.filter(user=request.user).exists()
@@ -148,7 +148,7 @@ class CampaignDetailView(APIView):
             {
                 "id": str(media.id),
                 "type": media.media_type,
-                "url": request.build_absolute_uri(media.file.url),
+                "url": request.build_absolute_uri(reverse("campaign_media", args=[media.id])),
             }
             for media in campaign.demo_media.all()
             if media.file and media.file.storage.exists(media.file.name)
@@ -191,6 +191,31 @@ class CampaignPitchDeckView(APIView):
             return Response({"error": "Pitch deck not found."}, status=status.HTTP_404_NOT_FOUND)
         content_type = mimetypes.guess_type(deck.name)[0] or "application/octet-stream"
         return FileResponse(deck.open("rb"), content_type=content_type, filename=Path(deck.name).name)
+
+
+class CampaignCoverView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, campaign_id):
+        campaign = Campaign.objects.filter(id=campaign_id).only("cover_image").first()
+        if not campaign or not campaign.cover_image or not campaign.cover_image.storage.exists(campaign.cover_image.name):
+            return Response({"error": "Campaign cover not found."}, status=status.HTTP_404_NOT_FOUND)
+        content_type = mimetypes.guess_type(campaign.cover_image.name)[0] or "application/octet-stream"
+        return FileResponse(campaign.cover_image.open("rb"), content_type=content_type)
+
+
+class CampaignMediaView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, media_id):
+        media = CampaignMedia.objects.filter(
+            id=media_id,
+            campaign__campaign_status__iexact="Approved",
+        ).first()
+        if not media or not media.file or not media.file.storage.exists(media.file.name):
+            return Response({"error": "Campaign media not found."}, status=status.HTTP_404_NOT_FOUND)
+        content_type = mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
+        return FileResponse(media.file.open("rb"), content_type=content_type)
 
 
 class CampaignCreateView(APIView):
