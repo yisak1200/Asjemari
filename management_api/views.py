@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
-from accounts.notifications import send_startup_approved_email
+from accounts.notifications import send_campaign_approved_email, send_startup_approved_email
 from fund_rasing.models import Campaign, CampaignCategory, WithdrawalRequest
 from startup_company.models import StartupCompany
 
@@ -249,7 +249,10 @@ class CampaignMonitorView(APIView):
             return Response({"error": "Valid campaign and status are required."}, status=status.HTTP_400_BAD_REQUEST)
         if decision == "Approved" and (not campaign.startup_company or campaign.startup_company.company_status != "Approved"):
             return Response({"error": "The startup must be approved first."}, status=status.HTTP_400_BAD_REQUEST)
+        previous_status = campaign.campaign_status
         campaign.campaign_status = decision
         campaign.is_active = decision not in ["Rejected", "suspended"]
         campaign.save(update_fields=["campaign_status", "is_active"])
+        if decision == "Approved" and previous_status != "Approved":
+            send_campaign_approved_email(campaign)
         return Response({"message": "Campaign status updated.", "campaign": campaign_payload(campaign)})

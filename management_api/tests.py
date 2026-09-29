@@ -41,8 +41,9 @@ class ManagementApiTests(APITestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.data["categories"][0]["name"], "Agriculture")
 
+    @patch("management_api.views.send_campaign_approved_email", return_value=True)
     @patch("management_api.views.send_startup_approved_email", return_value=True)
-    def test_approval_flow_requires_fayda_before_startup_and_startup_before_campaign(self, approval_email):
+    def test_approval_flow_requires_fayda_before_startup_and_startup_before_campaign(self, startup_approval_email, campaign_approval_email):
         startup = StartupCompany.objects.create(
             user=self.founder,
             fayda_number="1234567890123456",
@@ -82,7 +83,7 @@ class ManagementApiTests(APITestCase):
             f"/api/management/startups/{startup.id}/", {"status": "Approved"}, format="json"
         )
         self.assertEqual(startup_approval.status_code, 200)
-        approval_email.assert_called_once_with(startup)
+        startup_approval_email.assert_called_once_with(startup)
 
         startup_list = self.client.get("/api/management/startups/")
         application = startup_list.data["startups"][0]
@@ -97,6 +98,13 @@ class ManagementApiTests(APITestCase):
             f"/api/management/campaigns/{campaign.id}/", {"status": "Approved"}, format="json"
         )
         self.assertEqual(campaign_approval.status_code, 200)
+        campaign_approval_email.assert_called_once_with(campaign)
+
+        repeated_campaign_approval = self.client.patch(
+            f"/api/management/campaigns/{campaign.id}/", {"status": "Approved"}, format="json"
+        )
+        self.assertEqual(repeated_campaign_approval.status_code, 200)
+        campaign_approval_email.assert_called_once_with(campaign)
 
         overview = self.client.get("/api/management/overview/")
         self.assertEqual(overview.status_code, 200)
