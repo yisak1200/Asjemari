@@ -1,0 +1,18 @@
+[Unit]
+Description=Gunicorn daemon for Asjemari
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/root/Asjemari
+ExecStart=/root/Asjemari/env/bin/gunicorn \
+    --workers 3 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --bind unix:/run/gunicorn-asjemari.sock \
+    --chdir /root/Asjemari \
+    Asjemare.wsgi:application
+
+[Install]
+WantedBy=multi-user.target

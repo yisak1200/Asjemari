@@ -6,8 +6,8 @@ from django.db.models import Q
 
 from .models import StartupCompany
 
-MAX_PITCH_DECK_BYTES = 10 * 1024 * 1024
-MAX_FAYDA_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_PITCH_DECK_BYTES = 50 * 1024 * 1024
+MAX_FAYDA_IMAGE_BYTES = 15 * 1024 * 1024
 ALLOWED_PITCH_DECK_EXTENSIONS = {"pdf", "doc", "docx"}
 
 
