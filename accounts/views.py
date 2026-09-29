@@ -1,6 +1,7 @@
 from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core import signing
 from django.core.validators import validate_email
 from django.db import transaction
 from rest_framework import status
@@ -32,23 +33,69 @@ def session_payload(user):
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    signup_token_salt = "accounts.signup"
 
     def post(self, request):
         email = (request.data.get("email") or "").strip().lower()
         password = request.data.get("password") or ""
         full_name = (request.data.get("full_name") or "").strip()
         otp = str(request.data.get("otp") or "").strip()
+        signup_token = str(request.data.get("signup_token") or "").strip()
 
-        if not email or not password or not full_name:
-            return Response({"error": "Full name, email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not email:
+            return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             validate_email(email)
         except ValidationError:
             return Response({"error": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "An account with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # The staged signup flow verifies ownership before asking for personal
+        # details. The signed, short-lived token carries that verification into
+        # the final account-creation request without retaining the raw OTP.
+        if signup_token:
+            try:
+                verified = signing.loads(
+                    signup_token,
+                    salt=self.signup_token_salt,
+                    max_age=60 * settings.EMAIL_OTP_TTL_MINUTES,
+                )
+            except signing.SignatureExpired:
+                return Response({"error": "Your email verification has expired. Request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+            except signing.BadSignature:
+                return Response({"error": "Email verification is invalid. Request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+            if verified.get("email") != email:
+                return Response({"error": "Email verification does not match this email."}, status=status.HTTP_400_BAD_REQUEST)
+            if not password or not full_name:
+                return Response({"error": "Full name and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                validate_password(password)
+            except ValidationError as exc:
+                return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+            with transaction.atomic():
+                if User.objects.select_for_update().filter(email__iexact=email).exists():
+                    return Response({"error": "An account with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+                user = User.objects.create_user(email=email, password=password, full_name=full_name)
+            return Response(session_payload(user), status=status.HTTP_201_CREATED)
+
+        if otp and not password and not full_name:
+            try:
+                consume_email_otp(email, "signup", otp)
+            except OTPError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "message": "Email verified. Complete your account details.",
+                "signup_token": signing.dumps({"email": email}, salt=self.signup_token_salt),
+            })
+
+        # Keep accepting the original one-request completion shape for clients
+        # that started signup before this staged flow was released.
+        if (password and not full_name) or (full_name and not password):
+            return Response({"error": "Full name and password are required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            validate_password(password)
+            if password:
+                validate_password(password)
         except ValidationError as exc:
             return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
 

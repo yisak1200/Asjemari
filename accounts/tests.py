@@ -6,6 +6,38 @@ from accounts.models import User
 
 
 class EmailAuthenticationTests(APITestCase):
+    def test_staged_registration_requests_code_before_profile_details(self):
+        with patch("accounts.otp.generate_otp_code", return_value="123456"), patch("accounts.otp.send_email"):
+            requested = self.client.post(
+                "/api/accounts/register/",
+                {"email": "staged@example.com"},
+                format="json",
+            )
+        self.assertEqual(requested.status_code, status.HTTP_202_ACCEPTED)
+
+        verified = self.client.post(
+            "/api/accounts/register/",
+            {"email": "staged@example.com", "otp": "123456"},
+            format="json",
+        )
+        self.assertEqual(verified.status_code, status.HTTP_200_OK)
+        self.assertIn("signup_token", verified.data)
+        self.assertFalse(User.objects.filter(email="staged@example.com").exists())
+
+        completed = self.client.post(
+            "/api/accounts/register/",
+            {
+                "email": "staged@example.com",
+                "signup_token": verified.data["signup_token"],
+                "full_name": "Staged Founder",
+                "password": "StrongPass123!",
+            },
+            format="json",
+        )
+        self.assertEqual(completed.status_code, status.HTTP_201_CREATED)
+        self.assertIn("access_token", completed.data)
+        self.assertTrue(User.objects.filter(email="staged@example.com", full_name="Staged Founder").exists())
+
     def test_register_and_login_with_email_and_password(self):
         registration_payload = {
             "full_name": "Test Founder",
