@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
@@ -40,7 +41,8 @@ class ManagementApiTests(APITestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.data["categories"][0]["name"], "Agriculture")
 
-    def test_approval_flow_requires_fayda_before_startup_and_startup_before_campaign(self):
+    @patch("management_api.views.send_startup_approved_email", return_value=True)
+    def test_approval_flow_requires_fayda_before_startup_and_startup_before_campaign(self, approval_email):
         startup = StartupCompany.objects.create(
             user=self.founder,
             fayda_number="1234567890123456",
@@ -80,6 +82,7 @@ class ManagementApiTests(APITestCase):
             f"/api/management/startups/{startup.id}/", {"status": "Approved"}, format="json"
         )
         self.assertEqual(startup_approval.status_code, 200)
+        approval_email.assert_called_once_with(startup)
 
         startup_list = self.client.get("/api/management/startups/")
         application = startup_list.data["startups"][0]

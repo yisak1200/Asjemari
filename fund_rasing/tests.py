@@ -369,6 +369,34 @@ class CampaignManagementTests(APITestCase):
         self.assertTrue(repeated.data["paid"])
         verify.assert_called_once_with("asj-callback-paid")
 
+    @patch("fund_rasing.notifications.send_email")
+    @patch("fund_rasing.chapa.verify_transaction")
+    def test_logged_in_contributor_receives_one_confirmation_email(self, verify, send_email):
+        donation = Donation.objects.create(campaign=self.campaign, donor=self.user, amount=500)
+        payment = FundTransaction.objects.create(
+            donation=donation,
+            payment_gateway="Chapa",
+            transaction_id="asj-account-receipt",
+            balance=0,
+            currency="ETB",
+            contribution_amount=Decimal("500"),
+            charged_amount=Decimal("512.50"),
+        )
+        verify.return_value = {"status": "success", "data": {
+            "status": "success",
+            "tx_ref": "asj-account-receipt",
+            "currency": "ETB",
+            "amount": "512.50",
+        }}
+
+        first = self.client.get("/api/campaigns/payments/chapa/callback/?tx_ref=asj-account-receipt")
+        second = self.client.get("/api/campaigns/payments/chapa/callback/?tx_ref=asj-account-receipt")
+        self.assertTrue(first.data["paid"])
+        self.assertTrue(second.data["paid"])
+        send_email.assert_called_once()
+        payment.refresh_from_db()
+        self.assertIsNotNone(payment.contribution_notified_at)
+
     @patch("fund_rasing.chapa.verify_transaction")
     def test_callback_keeps_unconfirmed_chapa_payment_pending(self, verify):
         donation = Donation.objects.create(campaign=self.campaign, amount=500)

@@ -22,6 +22,7 @@ from rest_framework.views import APIView
 from startup_company.models import StartupCompany
 from .chapa import ChapaError, chapa_is_configured, initialize_transaction, reconcile_transaction
 from .models import Campaign, CampaignCategory, CampaignLike, CampaignMedia, Donation, FundTransaction, ReportCampaign, WithdrawalRequest
+from .notifications import send_contribution_notification
 
 
 MAX_CAMPAIGN_IMAGE_BYTES = 15 * 1024 * 1024
@@ -502,7 +503,9 @@ class ChapaPaymentInitializeView(APIView):
         tx_ref = f"asj-{uuid.uuid4().hex}"
         donation = Donation.objects.create(
             campaign=campaign,
-            donor=request.user if request.user.is_authenticated and not anonymous else None,
+            # Keep the account relationship for receipts and private history;
+            # is_anonymous alone controls public attribution.
+            donor=request.user if request.user.is_authenticated else None,
             name=public_name,
             is_anonymous=anonymous,
             amount=campaign_amount,
@@ -602,6 +605,7 @@ class ChapaPaymentCallbackView(APIView):
             fund_transaction = reconcile_transaction(tx_ref)
         except ChapaError as error:
             return Response({"error": str(error)}, status=status.HTTP_502_BAD_GATEWAY)
+        send_contribution_notification(fund_transaction)
         return Response({"tx_ref": tx_ref, "status": fund_transaction.payment_status, "paid": fund_transaction.is_paid})
 
     def get(self, request):
@@ -624,6 +628,7 @@ class ChapaPaymentStatusView(APIView):
                 fund_transaction = reconcile_transaction(tx_ref)
             except ChapaError:
                 fund_transaction.refresh_from_db()
+        send_contribution_notification(fund_transaction)
         campaign = fund_transaction.donation.campaign
         return Response({
             "tx_ref": tx_ref,

@@ -1,5 +1,8 @@
 from django.contrib.auth.password_validation import validate_password
+from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -8,7 +11,9 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
+from .email_service import ResendError
 from .models import User
+from .otp import OTPError, OTPRateLimited, consume_email_otp, issue_email_otp
 
 
 def session_payload(user):
@@ -32,9 +37,14 @@ class RegisterView(APIView):
         email = (request.data.get("email") or "").strip().lower()
         password = request.data.get("password") or ""
         full_name = (request.data.get("full_name") or "").strip()
+        otp = str(request.data.get("otp") or "").strip()
 
         if not email or not password or not full_name:
             return Response({"error": "Full name, email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response({"error": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "An account with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -42,8 +52,76 @@ class RegisterView(APIView):
         except ValidationError as exc:
             return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = User.objects.create_user(email=email, password=password, full_name=full_name)
+        if not otp:
+            try:
+                issue_email_otp(email, "signup")
+            except OTPRateLimited as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            except ResendError:
+                return Response({"error": "We could not send the verification email. Please try again."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response({
+                "message": "We sent a six-digit verification code to your email.",
+                "otp_required": True,
+                "expires_in": 60 * settings.EMAIL_OTP_TTL_MINUTES,
+            }, status=status.HTTP_202_ACCEPTED)
+
+        try:
+            consume_email_otp(email, "signup", otp)
+        except OTPError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            if User.objects.select_for_update().filter(email__iexact=email).exists():
+                return Response({"error": "An account with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            user = User.objects.create_user(email=email, password=password, full_name=full_name)
         return Response(session_payload(user), status=status.HTTP_201_CREATED)
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response({"error": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            try:
+                issue_email_otp(user.email, "password_reset")
+            except (OTPRateLimited, ResendError):
+                # Keep the response identical so this endpoint cannot be used to
+                # discover registered email addresses.
+                pass
+        return Response({
+            "message": "If an active account uses that email, a password-reset code has been sent.",
+            "otp_required": True,
+            "expires_in": 60 * settings.EMAIL_OTP_TTL_MINUTES,
+        })
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        otp = str(request.data.get("otp") or "").strip()
+        new_password = request.data.get("new_password") or ""
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if not user or not otp or not new_password:
+            return Response({"error": "The reset code or email is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(new_password, user)
+        except ValidationError as exc:
+            return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            consume_email_otp(user.email, "password_reset", otp)
+        except OTPError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(new_password)
+        user.save(update_fields=["password", "updated_at"])
+        return Response({"message": "Password reset successfully. You can now sign in."})
 
 
 class LoginView(APIView):

@@ -189,3 +189,9 @@ CHAPA_API_BASE_URL = os.environ.get("CHAPA_API_BASE_URL", "https://api.chapa.co/
 CHAPA_WEB_APP_URL = os.environ.get("CHAPA_WEB_APP_URL", "http://localhost:5177").rstrip("/")
 CHAPA_CALLBACK_URL = os.environ.get("CHAPA_CALLBACK_URL", "")
 CHAPA_FEE_RATE = Decimal(os.environ.get("CHAPA_FEE_RATE", "0.025"))
+
+RESEND_API = os.environ.get("RESEND_API", "")
+RESEND_API_BASE_URL = os.environ.get("RESEND_API_BASE_URL", "https://api.resend.com").rstrip("/")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "Asjemari <onboarding@resend.dev>")
+EMAIL_OTP_TTL_MINUTES = int(os.environ.get("EMAIL_OTP_TTL_MINUTES", "5"))
+EMAIL_OTP_RESEND_SECONDS = int(os.environ.get("EMAIL_OTP_RESEND_SECONDS", "60"))

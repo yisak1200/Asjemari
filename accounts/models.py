@@ -61,3 +61,26 @@ class UserOTP(models.Model):
 
     def __str__(self):
         return f"{self.phone_number} - {self.otp} created at {self.created_at}"
+
+
+class EmailOTPChallenge(models.Model):
+    PURPOSE_CHOICES = [
+        ("signup", "Signup"),
+        ("password_reset", "Password reset"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(db_index=True)
+    purpose = models.CharField(max_length=24, choices=PURPOSE_CHOICES)
+    code_hash = models.CharField(max_length=128)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    is_used = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "email_otp_challenges"
+        indexes = [models.Index(fields=["email", "purpose", "created_at"], name="email_otp_lookup_idx")]
+
+    def __str__(self):
+        return f"{self.email} - {self.purpose}"

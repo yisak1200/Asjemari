@@ -91,6 +91,7 @@ class FundTransaction(models.Model):
     swap_amount_etb = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     swap_response = models.JSONField(default=dict, blank=True)
     swap_attempted_at = models.DateTimeField(null=True, blank=True)
+    contribution_notified_at = models.DateTimeField(null=True, blank=True)
 
 class ReportCampaign(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.notifications import send_startup_approved_email
 from fund_rasing.models import Campaign, CampaignCategory, WithdrawalRequest
 from startup_company.models import StartupCompany
 
@@ -177,8 +178,11 @@ class StartupReviewView(APIView):
             return Response({"error": "Valid startup and decision are required."}, status=status.HTTP_400_BAD_REQUEST)
         if decision == "Approved" and startup.fayda_status != "Approved":
             return Response({"error": "Approve the founder’s Fayda identity first."}, status=status.HTTP_400_BAD_REQUEST)
+        previous_status = startup.company_status
         startup.company_status = decision
         startup.save(update_fields=["company_status"])
+        if decision == "Approved" and previous_status != "Approved":
+            send_startup_approved_email(startup)
         return Response({"message": f"Startup {decision.lower()}.", "startup": startup_payload(startup, request)})
 
 
