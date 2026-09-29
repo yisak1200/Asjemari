@@ -59,5 +59,19 @@ class StartupWorkflowTests(APITestCase):
 
         self.assertEqual(
             _upload_size_error(pitch, MAX_PITCH_DECK_BYTES, "The pitch deck"),
-            "The pitch deck must be 50 MB or smaller.",
+            "The pitch deck must be 10 MB or smaller.",
         )
+
+    def test_pitch_deck_over_ten_megabytes_is_rejected_with_clear_error(self):
+        pitch = SimpleUploadedFile("large-pitch.pdf", b"0" * (10 * 1024 * 1024 + 1), content_type="application/pdf")
+        response = self.client.post("/api/startups/apply/", {
+            "fayda_front_image": SimpleUploadedFile("front.jpg", b"front", content_type="image/jpeg"),
+            "fayda_back_image": SimpleUploadedFile("back.jpg", b"back", content_type="image/jpeg"),
+            "company_name": "Large Deck Startup",
+            "company_description": "A startup with an oversized pitch deck.",
+            "tin": "TIN-LARGE",
+            "traction_description": "Testing upload validation.",
+            "pitch_deck": pitch,
+        }, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "The pitch deck must be 10 MB or smaller.")
