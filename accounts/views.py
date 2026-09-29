@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
@@ -62,7 +63,13 @@ class RefreshSessionView(APIView):
 
     def post(self, request):
         serializer = TokenRefreshSerializer(data={"refresh": request.data.get("refresh")})
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError:
+            return Response(
+                {"error": "Your session has expired. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         return Response({"access_token": serializer.validated_data["access"]})
 
 
